@@ -7,7 +7,7 @@ touch count * recency decay. This is what turns raw pivots into the
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -25,6 +25,9 @@ class Level:
     touches: int
     weight: float
     last_touch_idx: int
+    # per-touch history: [{"time": unix_s, "price": float, "kind": "H"|"L"}], chronological.
+    # "H" = swing high (tested as resistance and rejected), "L" = swing low (held as support).
+    events: list[dict] = field(default_factory=list)
 
     def contains(self, price: float, tol: float = 0.0) -> bool:
         return self.lo - tol <= price <= self.hi + tol
@@ -32,7 +35,7 @@ class Level:
     def to_dict(self) -> dict:
         return {
             "lo": round(self.lo, 3), "hi": round(self.hi, 3), "center": round(self.center, 3),
-            "touches": self.touches, "weight": round(self.weight, 2),
+            "touches": self.touches, "weight": round(self.weight, 2), "events": self.events,
         }
 
 
@@ -57,6 +60,11 @@ def extract_levels(df: pd.DataFrame, p: DetectionParams) -> list[Level]:
         # recency-decayed weight so stale levels fade
         ages = n - pts["idx"].to_numpy()
         decay = np.exp(-np.log(2) * ages / p.level_recency_half_life_bars)
+        events = sorted(
+            ({"time": int(df.index[int(i)].timestamp()), "price": round(float(pr), 3), "kind": str(k)}
+             for i, pr, k in zip(pts["idx"], pts["price"], pts["kind"])),
+            key=lambda e: e["time"],
+        )
         levels.append(Level(
             lo=float(pts["price"].min()),
             hi=float(pts["price"].max()),
@@ -64,5 +72,6 @@ def extract_levels(df: pd.DataFrame, p: DetectionParams) -> list[Level]:
             touches=touches,
             weight=float(touches * decay.mean() * 10),
             last_touch_idx=int(pts["idx"].max()),
+            events=events,
         ))
     return sorted(levels, key=lambda l: l.center)

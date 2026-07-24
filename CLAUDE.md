@@ -65,7 +65,14 @@ prompts and prose out of detectors.
   `LLM_PROVIDER` ∈ {anthropic, groq, ollama, openai}. Convention from other projects:
   `DEPLOYMENT_ENV=dev` → Groq (fast, free tier), `DEPLOYMENT_ENV=prod` → Ollama on the EC2 box
   (llama3.1:8b-instruct or qwen2.5:14b — tool-calling capable models only).
-- Config via pydantic-settings, `.env` file, never hardcode keys.
+- Config via pydantic-settings, `.env` file, never hardcode keys. dotenv gotcha: no inline
+  comments after values — pydantic-settings treats them as part of the value.
+- Live data: unofficial `tvdatafeed` (TradingView websocket, installed from GitHub — not on
+  PyPI). Anonymous works (~5000-bar cap); TV_USERNAME/TV_PASSWORD optional. It's blocking —
+  always call through `run_in_threadpool`. Official fallback: `data/loader.py::fetch_oanda`.
+- Frontend: React + Vite + TypeScript in `frontend/`, `lightweight-charts` v5 for the
+  candlestick chart with S/R overlays. In compose, nginx serves the built app on :3000 and
+  proxies the (unprefixed) API paths to `api:8000`; the vite dev server proxies the same list.
 - bcrypt directly if auth is added later (not passlib). `HealthCheckFilter` on uvicorn logs.
 - All timestamps UTC. All price thresholds ATR-normalized (never absolute $ — must work on
   XAUUSD at 4000 and EURUSD at 1.08).
@@ -104,7 +111,8 @@ uv sync                          # install
 uv run python scripts/demo.py    # end-to-end demo on synthetic sessions
 uv run pytest                    # tests
 uv run uvicorn patternlab.api.main:app --reload   # API on :8000
-docker compose up -d             # postgres + ollama + api (EC2)
+cd frontend && npm install && npm run dev         # frontend dev server on :3000
+docker compose up -d --build     # frontend (:3000) + api (:8000) + postgres (+ --profile ollama)
 ```
 
 ## EC2 deployment notes

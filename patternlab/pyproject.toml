@@ -12,6 +12,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "httpx>=0.27",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "python-multipart>=0.0.9",
+    "tvdatafeed",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +27,7 @@ agent = [
     "langchain-ollama>=0.2",
     "langchain-openai>=0.2",
 ]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "aiosqlite>=0.20", "ruff>=0.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -34,3 +38,9 @@ packages = ["src/patternlab"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.uv.sources]
+tvdatafeed = { git = "https://github.com/rongardF/tvdatafeed" }

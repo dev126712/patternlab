@@ -6,6 +6,8 @@ Canonical frame contract used everywhere in this repo:
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import numpy as np
 import pandas as pd
 
@@ -39,19 +41,90 @@ def load_csv(path: str) -> pd.DataFrame:
     return normalize(pd.read_csv(path))
 
 
+OANDA_PRACTICE_URL = "https://api-fxpractice.oanda.com"
+OANDA_MAX_CANDLES_PER_REQUEST = 5000
+OANDA_GRANULARITIES = {"S5", "S10", "S15", "S30", "M1", "M2", "M4", "M5", "M10", "M15",
+                       "M30", "H1", "H2", "H3", "H4", "H6", "H8", "H12", "D", "W", "M"}
+
+
+def _oanda_candles(instrument: str, params: dict) -> list[dict]:
+    """Single candles request, isolated so tests can monkeypatch it."""
+    import httpx
+
+    from patternlab.config import settings
+
+    r = httpx.get(f"{OANDA_PRACTICE_URL}/v3/instruments/{instrument}/candles",
+                  params=params, timeout=30,
+                  headers={"Authorization": f"Bearer {settings.oanda_api_token}"})
+    r.raise_for_status()
+    return r.json()["candles"]
+
+
 def fetch_oanda(instrument: str = "XAU_USD", granularity: str = "M1",
                 count: int = 5000) -> pd.DataFrame:
-    """Fetch candles from OANDA v20 REST API.
+    """Fetch candles from the OANDA v20 REST API (practice endpoint) into the canonical
+    frame. Official counterpart to the unofficial tvdatafeed source.
 
-    TODO(alexandre): implement with real credentials — needs practice-account token
-    (settings.oanda_api_token) and account id. Endpoint:
-      GET https://api-fxpractice.oanda.com/v3/instruments/{instrument}/candles
-          ?granularity=M1&count=5000&price=M
-      Authorization: Bearer <token>
-    Parse response["candles"] -> rows (time, mid.o/h/l/c, volume) -> normalize().
-    Paginate with `from`/`to` for backfills > 5000 candles.
+    Blocking (sync HTTP) — API handlers must call through run_in_threadpool. Includes the
+    still-forming last candle, matching tvdatafeed behavior. Backfills beyond the per-request
+    cap paginate backwards with `to`; overlap at page seams is deduped by normalize().
     """
-    raise NotImplementedError("Phase 2 — see TODO above and CLAUDE.md build order")
+    from patternlab.config import settings
+
+    if not settings.oanda_api_token:
+        raise RuntimeError("OANDA_API_TOKEN is not configured")
+    if granularity not in OANDA_GRANULARITIES:
+        raise ValueError(f"Unknown OANDA granularity {granularity!r}")
+
+    pages: list[list[dict]] = []
+    remaining, to = count, None
+    while remaining > 0:
+        params = {"granularity": granularity, "price": "M",
+                  "count": min(remaining, OANDA_MAX_CANDLES_PER_REQUEST)}
+        if to is not None:
+            params["to"] = to
+        candles = _oanda_candles(instrument, params)
+        if not candles:
+            break
+        pages.append(candles)
+        earliest = candles[0]["time"]
+        if earliest == to:  # no further history
+            break
+        remaining -= len(candles)
+        to = earliest
+    if not pages:
+        raise RuntimeError(f"OANDA returned no candles for {instrument} {granularity}")
+
+    rows = [{"time": c["time"], "open": c["mid"]["o"], "high": c["mid"]["h"],
+             "low": c["mid"]["l"], "close": c["mid"]["c"], "volume": c["volume"]}
+            for page in reversed(pages) for c in page]
+    return normalize(pd.DataFrame(rows)).tail(count)
+
+
+def fetch_oanda_day(instrument: str, day: dt.date, granularity: str = "M1") -> pd.DataFrame:
+    """Fetch one UTC calendar day of candles. Used to re-hydrate stored sessions for
+    charting/comparison — the DB keeps fingerprints and analyses, not raw bars.
+
+    Blocking — call through run_in_threadpool from async handlers.
+    """
+    from patternlab.config import settings
+
+    if not settings.oanda_api_token:
+        raise RuntimeError("OANDA_API_TOKEN is not configured")
+    if granularity not in OANDA_GRANULARITIES:
+        raise ValueError(f"Unknown OANDA granularity {granularity!r}")
+
+    start = dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc)
+    candles = _oanda_candles(instrument, {
+        "granularity": granularity, "price": "M",
+        "from": start.isoformat(), "to": (start + dt.timedelta(days=1)).isoformat(),
+    })
+    if not candles:
+        raise RuntimeError(f"OANDA returned no candles for {instrument} on {day}")
+    rows = [{"time": c["time"], "open": c["mid"]["o"], "high": c["mid"]["h"],
+             "low": c["mid"]["l"], "close": c["mid"]["c"], "volume": c["volume"]}
+            for c in candles]
+    return normalize(pd.DataFrame(rows))
 
 
 def synthetic_session(kind: str, n: int = 900, base: float = 4000.0,

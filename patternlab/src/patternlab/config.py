@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-6"
     oanda_api_token: str = ""
     oanda_account_id: str = ""
+    tv_username: str = ""                  # TradingView login for tvDatafeed (optional)
+    tv_password: str = ""
     database_url: str = ""
 
     @property

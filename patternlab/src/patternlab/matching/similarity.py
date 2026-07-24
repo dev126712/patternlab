@@ -31,9 +31,15 @@ _CTX = {"fresh_base": 0.0, "mixed": 0.5, "recovery_leg": 1.0}
 _ANGLE = {"grinding": 0.0, "moderate": 0.5, "steep": 1.0, "unknown": 0.5}
 
 
-def analyze_session(df: pd.DataFrame, p: DetectionParams) -> dict:
-    """Full structural read of one session. This dict is also what the LLM agent receives."""
-    levels = extract_levels(df, p)
+def analyze_session(df: pd.DataFrame, p: DetectionParams,
+                    levels_df: pd.DataFrame | None = None) -> dict:
+    """Full structural read of one session. This dict is also what the LLM agent receives.
+
+    levels_df: optional longer-history frame ending at the same bar as df, used only for
+    S/R level extraction — touch counts/weights then span more history than the analyzed
+    window while regimes/context/approach stay scoped to df.
+    """
+    levels = extract_levels(levels_df if levels_df is not None else df, p)
     segs = segment_regimes(df, p)
     ctx = classify_context(df, p)
     close = float(df["close"].iloc[-1])
