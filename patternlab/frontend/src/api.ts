@@ -151,5 +151,24 @@ export const liveNarrate = (p: FetchParams) =>
     `/live/narrate?${qs(p)}`,
   );
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export const liveChat = (messages: ChatMessage[], p: FetchParams) =>
+  request<{ reply: string; llm_provider: string; as_of: number | null }>("/live/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages,
+      symbol: p.symbol,
+      exchange: p.exchange,
+      interval: p.interval,
+      n_bars: p.n_bars,
+      ...(p.lookback_bars > p.n_bars ? { lookback_bars: p.lookback_bars } : {}),
+    }),
+  });
+
 export const health = () =>
   request<{ status: string; llm_provider: string; persistence: boolean }>("/health");

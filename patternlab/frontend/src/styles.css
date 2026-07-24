@@ -183,6 +183,59 @@ button.secondary {
   letter-spacing: normal;
 }
 
+.chat {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-msg {
+  border-radius: 8px;
+  padding: 8px 12px;
+  max-width: 85%;
+  white-space: pre-wrap;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.chat-msg.pending {
+  color: var(--muted);
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.chat-input-row input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.chat-input-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .level-detail {
   background: var(--surface);
   border: 1px solid var(--border);

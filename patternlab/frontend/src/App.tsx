@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ChatMessage,
   FetchParams,
   health,
   liveAnalyze,
   LiveAnalyzeResponse,
+  liveChat,
   liveCompare,
   liveNarrate,
   Match,
@@ -43,6 +45,9 @@ export default function App() {
   const [narrative, setNarrative] = useState<string | null>(null);
   const [narrativeAt, setNarrativeAt] = useState<Date | null>(null);
   const [narrating, setNarrating] = useState(false);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
   const [selectedCenter, setSelectedCenter] = useState<number | null>(null);
   const [compareMatch, setCompareMatch] = useState<Match | null>(null);
   const [compareData, setCompareData] = useState<SessionBars | null>(null);
@@ -103,6 +108,27 @@ export default function App() {
       setNarrating(false);
     }
   }, [activeParams, form]);
+
+  // Follow-up Q&A under the LLM read. Stateless on the server — resend the whole history.
+  const sendChat = useCallback(async () => {
+    const q = chatInput.trim();
+    if (!q || chatSending) return;
+    const next = [...chat, { role: "user" as const, content: q }];
+    setChat(next);
+    setChatInput("");
+    setChatSending(true);
+    setError(null);
+    try {
+      const r = await liveChat(next, activeParams ?? form);
+      setChat([...next, { role: "assistant" as const, content: r.reply }]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setChat(chat); // roll back the unanswered question so history stays alternating
+      setChatInput(q);
+    } finally {
+      setChatSending(false);
+    }
+  }, [chat, chatInput, chatSending, activeParams, form]);
 
   const selectMatch = useCallback(async (m: Match) => {
     setCompareMatch(m);
@@ -260,6 +286,29 @@ export default function App() {
                 {narrativeAt && <span className="narrative-time">as of {narrativeAt.toLocaleTimeString()}</span>}
               </div>
               {narrative}
+              <div className="chat">
+                {chat.map((m, i) => (
+                  <div key={i} className={`chat-msg ${m.role}`}>
+                    {m.content}
+                  </div>
+                ))}
+                {chatSending && <div className="chat-msg assistant pending">Thinking…</div>}
+                <div className="chat-input-row">
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") sendChat();
+                    }}
+                    placeholder="Ask a follow-up — e.g. where do you see solid highs and lows?"
+                    disabled={chatSending}
+                  />
+                  <button className="secondary" onClick={sendChat}
+                          disabled={chatSending || !chatInput.trim()}>
+                    Ask
+                  </button>
+                </div>
+              </div>
             </div>
           )}
           <div className="panels">

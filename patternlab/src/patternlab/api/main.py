@@ -9,6 +9,7 @@ GET  /sessions/{id}/bars — stored session re-hydrated from OANDA (bars + store
 GET  /live/analyze  — fetch from TradingView (tvDatafeed) -> bars + analysis (+ matches if DB)
 GET  /live/compare  — live session vs one stored session (+ optional LLM narrative)
 GET  /live/narrate  — LLM read of the current live session
+POST /live/chat     — grounded follow-up Q&A about the live session (stateless history)
 POST /live/sessions — fetch from TradingView and persist as a session
 GET  /health   — liveness (log-suppressed)
 
@@ -23,12 +24,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from typing import Literal
+
 import pandas as pd
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from patternlab.config import params, settings
+from patternlab.data import news as news_feed
 from patternlab.data.loader import fetch_oanda, fetch_oanda_day, normalize
 from patternlab.data.tradingview import fetch_tradingview
 from patternlab.matching.similarity import analyze_session, compare_sessions
@@ -91,6 +96,8 @@ async def compare(
         from patternlab.agent.graph import build_graph
         out = build_graph().invoke({"df_a": df_a, "df_b": df_b})
         result["narrative"] = out.get("narrative", "")
+        if "narrative_error" in out:
+            result["narrative_error"] = out["narrative_error"]
     return result
 
 
@@ -171,7 +178,10 @@ async def live_compare(
         if narrate:
             from patternlab.agent.graph import build_graph
             state = build_graph().invoke({"df_a": df_hist, "df_b": df_live})
-            return state["comparison"] | {"narrative": state.get("narrative", "")}
+            out = state["comparison"] | {"narrative": state.get("narrative", "")}
+            if "narrative_error" in state:
+                out["narrative_error"] = state["narrative_error"]
+            return out
         return compare_sessions(df_hist, df_live, params)
 
     try:
@@ -184,7 +194,8 @@ async def live_compare(
             "similarity_score": result["similarity_score"],
             "fingerprint_cosine": result["fingerprint_cosine"],
             "dtw_similarity": result["dtw_similarity"],
-            "narrative": result.get("narrative")}
+            "narrative": result.get("narrative"),
+            "narrative_error": result.get("narrative_error")}
 
 
 def _bars_json(df: pd.DataFrame) -> list[dict]:
@@ -259,6 +270,19 @@ async def live_analyze(
     return await _live_analysis(symbol, exchange, interval, n_bars, lookback_bars, top_k)
 
 
+async def _news_events(symbol: str) -> list[dict]:
+    """Calendar events for the LLM prompts. News is garnish — a dead feed must never
+    block narration, so failures degrade to an empty list."""
+    if not settings.news_feed_url:
+        return []
+    try:
+        # Blocking httpx fetch (cached) — threadpool, never on the event loop.
+        return await run_in_threadpool(news_feed.relevant_events, symbol)
+    except Exception:
+        logging.getLogger(__name__).warning("news feed fetch failed", exc_info=True)
+        return []
+
+
 @app.get("/live/narrate")
 async def live_narrate(
     symbol: str = Query("XAUUSD"),
@@ -271,13 +295,50 @@ async def live_narrate(
     """LLM read of the current live session. On-demand only — the frontend must NOT call
     this on its auto-refresh loop (slow, costs tokens)."""
     result = await _live_analysis(symbol, exchange, interval, n_bars, lookback_bars, top_k)
+    news = await _news_events(symbol)
     from patternlab.agent.graph import narrate_live
     try:
         # Sync LLM call — threadpool, never on the event loop.
-        narrative = await run_in_threadpool(narrate_live, result["analysis"], result["matches"])
+        narrative = await run_in_threadpool(narrate_live, result["analysis"], result["matches"],
+                                            news)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM narration failed: {e}")
     return {"narrative": narrative, "llm_provider": settings.effective_llm_provider,
+            "as_of": result["bars"][-1]["time"] if result["bars"] else None}
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class LiveChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1)
+    symbol: str = "XAUUSD"
+    exchange: str = "OANDA"
+    interval: str = "1"
+    n_bars: int = Field(1500, ge=100, le=5000)
+    lookback_bars: int | None = Field(None, ge=100, le=5000)
+    top_k: int = Field(5, ge=1, le=50)
+
+
+@app.post("/live/chat")
+async def live_chat(req: LiveChatRequest) -> dict:
+    """Follow-up Q&A about the current live session, grounded in a fresh analysis each turn.
+    Stateless: the client resends the whole conversation. On-demand only — costs tokens."""
+    if req.messages[-1].role != "user":
+        raise HTTPException(status_code=422, detail="Last message must be from the user")
+    result = await _live_analysis(req.symbol, req.exchange, req.interval, req.n_bars,
+                                  req.lookback_bars, req.top_k)
+    news = await _news_events(req.symbol)
+    from patternlab.agent.graph import chat_live
+    try:
+        # Sync LLM call — threadpool, never on the event loop.
+        reply = await run_in_threadpool(chat_live, result["analysis"], result["matches"],
+                                        [m.model_dump() for m in req.messages], news)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM chat failed: {e}")
+    return {"reply": reply, "llm_provider": settings.effective_llm_provider,
             "as_of": result["bars"][-1]["time"] if result["bars"] else None}
 
 

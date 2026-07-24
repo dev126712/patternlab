@@ -112,11 +112,13 @@ def test_live_narrate_endpoint(mock_tv, no_db, monkeypatch):
 
     seen = {}
 
-    def fake_narrate(analysis, matches=None):
+    def fake_narrate(analysis, matches=None, news=None):
         seen["analysis"] = analysis
         return "structural read here"
 
     monkeypatch.setattr(graph, "narrate_live", fake_narrate)
+    from patternlab.config import settings
+    monkeypatch.setattr(settings, "news_feed_url", "")  # no network in tests
     with TestClient(app) as client:
         r = client.get("/live/narrate", params={"n_bars": 600})
     assert r.status_code == 200

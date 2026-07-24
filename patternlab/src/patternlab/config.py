@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     tv_username: str = ""                  # TradingView login for tvDatafeed (optional)
     tv_password: str = ""
     database_url: str = ""
+    # ForexFactory weekly economic-calendar feed; empty disables news in LLM prompts
+    news_feed_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
     @property
     def effective_llm_provider(self) -> str:
