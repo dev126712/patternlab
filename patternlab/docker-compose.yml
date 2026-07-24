@@ -1,0 +1,30 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    ports: ["8000:8000"]
+    depends_on: [db]
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: patternlab
+      POSTGRES_PASSWORD: patternlab
+      POSTGRES_DB: patternlab
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+  # local LLM sidecar for prod (DEPLOYMENT_ENV=prod). Start with:
+  #   docker compose --profile ollama up -d
+  #   docker exec -it patternlab-ollama-1 ollama pull qwen2.5:14b
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    volumes: ["ollama:/root/.ollama"]
+    ports: ["11434:11434"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ollama:
